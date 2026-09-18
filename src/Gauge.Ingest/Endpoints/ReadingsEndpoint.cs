@@ -26,6 +26,8 @@ public static class ReadingsEndpoint
             return Results.Ok(result);
         })
         .WithName("IngestReadings")
+        // Backpressure is scoped per tenant; reporting endpoints are unaffected.
+        .RequireRateLimiting("tenant-ingest")
         .WithOpenApi();
 
         app.MapGet("/api/meters/{meterId}/hourly", async (

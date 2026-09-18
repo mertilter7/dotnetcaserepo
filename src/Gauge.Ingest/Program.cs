@@ -2,9 +2,16 @@ using Gauge.Ingest.Data;
 using Gauge.Ingest.Endpoints;
 using Gauge.Ingest.Services;
 using Microsoft.EntityFrameworkCore;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 var sqlServerConnection = builder.Configuration.GetConnectionString("SqlServer");
+var tenantConcurrencyLimit = Math.Max(
+    1,
+    builder.Configuration.GetValue("Ingest:TenantConcurrencyLimit", 4));
+var tenantQueueLimit = Math.Max(
+    0,
+    builder.Configuration.GetValue("Ingest:TenantQueueLimit", 8));
 
 builder.Services.AddDbContext<AppDbContext>(o =>
 {
@@ -17,6 +24,21 @@ builder.Services.AddDbContext<AppDbContext>(o =>
 builder.Services.AddScoped<ReadingIngestService>();
 builder.Services.AddSingleton<TenantQuotaService>();
 builder.Services.AddHostedService<AggregationWorker>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // Partitioning by API key prevents one tenant from consuming all ingest slots.
+    options.AddPolicy("tenant-ingest", httpContext =>
+        RateLimitPartition.GetConcurrencyLimiter(
+            httpContext.Request.Headers["X-Api-Key"].ToString(),
+            _ => new ConcurrencyLimiterOptions
+            {
+                PermitLimit = tenantConcurrencyLimit,
+                QueueLimit = tenantQueueLimit,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            }));
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -31,6 +53,7 @@ using (var scope = app.Services.CreateScope())
 
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseRateLimiter();
 ReadingsEndpoint.Map(app);
 app.Run();
 
