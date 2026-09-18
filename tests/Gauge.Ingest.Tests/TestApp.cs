@@ -10,6 +10,12 @@ namespace Gauge.Ingest.Tests;
 public sealed class TestApp : WebApplicationFactory<Program>
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"gauge-test-{Guid.NewGuid():N}.db");
+    private readonly bool _runAggregationWorker;
+
+    public TestApp(bool runAggregationWorker = false)
+    {
+        _runAggregationWorker = runAggregationWorker;
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -19,14 +25,17 @@ public sealed class TestApp : WebApplicationFactory<Program>
                 ["ConnectionStrings:Default"] = $"Data Source={_dbPath}"
             }));
 
-        // Idempotency tests do not need aggregation; disabling it keeps each testhost isolated.
-        builder.ConfigureServices(services =>
+        // Focused API tests disable the worker; aggregation tests explicitly opt in.
+        if (!_runAggregationWorker)
         {
-            var worker = services.SingleOrDefault(
-                d => d.ImplementationType == typeof(AggregationWorker));
-            if (worker is not null)
-                services.Remove(worker);
-        });
+            builder.ConfigureServices(services =>
+            {
+                var worker = services.SingleOrDefault(
+                    d => d.ImplementationType == typeof(AggregationWorker));
+                if (worker is not null)
+                    services.Remove(worker);
+            });
+        }
     }
 
     protected override void Dispose(bool disposing)

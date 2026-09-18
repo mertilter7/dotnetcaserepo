@@ -25,7 +25,10 @@ public sealed class AggregationWorker : BackgroundService
                 // A hosted service is singleton; use a fresh scoped DbContext per iteration.
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var dirty = await db.DirtyHours.Take(500).ToListAsync(stoppingToken);
+                var dirty = await db.DirtyHours
+                    .OrderBy(d => d.Id)
+                    .Take(500)
+                    .ToListAsync(stoppingToken);
 
                 foreach (var d in dirty)
                 {
