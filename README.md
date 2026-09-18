@@ -36,3 +36,32 @@ Server tarafındaki karşılıkları **hazırdır**: `batchId` idempotency, tran
 tenant başına rate limit ve `429 + Retry-After`. Collector bu contract'a uyduğu sürece
 veri kaybı yaşanmadan backpressure yönetilir. Contract doğrulanamazsa rate limiter
 production'da kontrollü bir rollout ile aktif edilmelidir.
+
+## Bilinen Kısıtlama — Aggregation ↔ Eşzamanlı Okuma Yarışı
+
+`AggregationWorker`, bir saatin toplamını (`SUM`) transaction **başlamadan önce** hesaplar ve
+`DirtyHour` işaretini işlem sonunda siler. Ingest tarafı ise aynı saat için lease'li bir
+`DirtyHour` zaten varsa yeni işaret **eklemez** (dedup). Bu iki davranışın birleşimi dar bir
+yarış penceresi yaratır:
+
+1. Worker `(meter, saat)` kaydını claim eder ve `SUM = X` hesaplar.
+2. Bu sırada aynı saate **geç/eşzamanlı bir okuma** gelir; okuma yazılır ama mevcut lease'li
+   `DirtyHour` görüldüğü için yeni işaret oluşturulmaz.
+3. Worker `HourlyAggregate = X` yazıp `DirtyHour`'u siler.
+
+**Sonuç:** Ham `Reading` verisi kaybolmaz (tabloda durur), ancak türetilmiş `HourlyAggregate`
+o okumayı içermez ve saat yeniden işaretlenmediği için (aynı saate başka okuma gelmedikçe)
+kendiliğinden düzelmez. Bir faturalama/raporlama sistemi için bu, raporlanan değerde sessiz
+bir eksik hesaplamadır.
+
+**Neden şimdi çözülmedi (bilinçli trade-off):** Doküman kabul kriterleri (idempotency + mevcut
+testler) karşılanıyor; bu yarış yalnızca yüksek eşzamanlılıkta oluşan bir uç durum ve mevcut
+testler tarafından tetiklenmiyor. Kalıcı çözümü `DirtyHour`'a şema değişikliği (version/damga)
+ve yeni migration gerektirir; bu da aggregation çekirdeğine dokunan, ayrı ve dikkatli ele
+alınması gereken bir iştir.
+
+**Önerilen çözüm:** `DirtyHour`'a bir `Version`/`UpdatedAt` alanı eklenir; ingest, lease'li bir
+kayıt bulduğunda onu "yeniden kirlendi" olarak işaretler (version'ı artırır). Worker silmeyi
+koşullu yapar: `WHERE Id=... AND LeaseId=<worker> AND Version=<claim anındaki version>`. Ingest
+version'ı değiştirdiyse silme 0 satır etkiler → `DirtyHour` kalır → saat yeniden hesaplanır.
+Bu yaklaşım crash-safety'yi (lease/delete-after) bozmadan eksik hesaplamayı kapatır.
