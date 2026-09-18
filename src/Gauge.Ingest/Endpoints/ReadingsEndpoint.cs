@@ -1,4 +1,5 @@
 using Gauge.Ingest.Data;
+using Gauge.Ingest.Domain;
 using Gauge.Ingest.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -27,13 +28,51 @@ public static class ReadingsEndpoint
         .WithName("IngestReadings")
         .WithOpenApi();
 
-        app.MapGet("/api/meters/{meterId}/hourly", async (string meterId, AppDbContext db) =>
-            Results.Ok(await db.HourlyAggregates
-                .Where(h => h.MeterId == meterId)
-                .OrderBy(h => h.HourStart)
-                .ToListAsync()));
+        app.MapGet("/api/meters/{meterId}/hourly", async (
+            string meterId,
+            HttpContext http,
+            AppDbContext db,
+            CancellationToken ct) =>
+        {
+            var tenant = await ResolveTenantAsync(http, db, ct);
+            if (tenant is null) return Results.Unauthorized();
 
-        app.MapGet("/api/tenants/{tenantId}/usage", (string tenantId, TenantQuotaService quota) =>
-            Results.Ok(new { tenantId, readingsThisHour = quota.Get(tenantId) }));
+            // Tenant isolation: only aggregates belonging to the API key's tenant are visible.
+            var aggregates = await db.Meters
+                .Where(m => m.Id == meterId && m.TenantId == tenant.Id)
+                .SelectMany(m => db.HourlyAggregates
+                    .Where(h => h.MeterId == m.Id)
+                    .OrderBy(h => h.HourStart))
+                .ToListAsync(ct);
+
+            return Results.Ok(aggregates);
+        });
+
+        app.MapGet("/api/tenants/{tenantId}/usage", async (
+            string tenantId,
+            HttpContext http,
+            AppDbContext db,
+            TenantQuotaService quota,
+            CancellationToken ct) =>
+        {
+            var tenant = await ResolveTenantAsync(http, db, ct);
+            if (tenant is null) return Results.Unauthorized();
+
+            // The URL tenantId is not trusted; the authenticated tenant is the authority.
+            if (tenant.Id != tenantId)
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+            return Results.Ok(new { tenantId = tenant.Id, readingsThisHour = quota.Get(tenant.Id) });
+        });
+    }
+
+    private static Task<Tenant?> ResolveTenantAsync(
+        HttpContext http,
+        AppDbContext db,
+        CancellationToken ct)
+    {
+        // Tenant scope is derived from the API key, never from a user-controlled route value.
+        var apiKey = http.Request.Headers["X-Api-Key"].ToString();
+        return db.Tenants.FirstOrDefaultAsync(t => t.ApiKey == apiKey, ct);
     }
 }
