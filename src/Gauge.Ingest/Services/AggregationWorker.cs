@@ -7,48 +7,71 @@ namespace Gauge.Ingest.Services;
 /// <summary>DirtyHours tablosunu tarayıp saatlik toplamları yeniden hesaplar.</summary>
 public sealed class AggregationWorker : BackgroundService
 {
-    private readonly AppDbContext _db;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AggregationWorker> _logger;
 
-    public AggregationWorker(IServiceProvider services, ILogger<AggregationWorker> logger)
+    public AggregationWorker(IServiceScopeFactory scopeFactory, ILogger<AggregationWorker> logger)
     {
-        // Worker singleton olduğu için scope'u burada bir kere açıyoruz.
-        var scope = services.CreateScope();
-        _db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (true)
+        while (!stoppingToken.IsCancellationRequested)
         {
-            var dirty = await _db.DirtyHours.Take(500).ToListAsync();
-            foreach (var d in dirty)
+            try
             {
-                var total = await _db.Readings
-                    .Where(r => r.MeterId == d.MeterId && r.Timestamp >= d.HourStart && r.Timestamp < d.HourStart.AddHours(1))
-                    .SumAsync(r => r.Kwh);
+                // A hosted service is singleton; use a fresh scoped DbContext per iteration.
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var dirty = await db.DirtyHours.Take(500).ToListAsync(stoppingToken);
 
-                var agg = await _db.HourlyAggregates
-                    .FirstOrDefaultAsync(h => h.MeterId == d.MeterId && h.HourStart == d.HourStart);
-
-                if (agg is null)
-                    _db.HourlyAggregates.Add(new HourlyAggregate { MeterId = d.MeterId, HourStart = d.HourStart, TotalKwh = total, ComputedAt = DateTime.UtcNow });
-                else
+                foreach (var d in dirty)
                 {
-                    agg.TotalKwh = total;
-                    agg.ComputedAt = DateTime.UtcNow;
+                    var total = await db.Readings
+                        .Where(r => r.MeterId == d.MeterId &&
+                                    r.Timestamp >= d.HourStart &&
+                                    r.Timestamp < d.HourStart.AddHours(1))
+                        .SumAsync(r => r.Kwh, stoppingToken);
+
+                    var agg = await db.HourlyAggregates
+                        .FirstOrDefaultAsync(
+                            h => h.MeterId == d.MeterId && h.HourStart == d.HourStart,
+                            stoppingToken);
+
+                    if (agg is null)
+                    {
+                        db.HourlyAggregates.Add(new HourlyAggregate
+                        {
+                            MeterId = d.MeterId,
+                            HourStart = d.HourStart,
+                            TotalKwh = total,
+                            ComputedAt = DateTime.UtcNow
+                        });
+                    }
+                    else
+                    {
+                        agg.TotalKwh = total;
+                        agg.ComputedAt = DateTime.UtcNow;
+                    }
+
+                    db.DirtyHours.Remove(d);
                 }
-                _db.DirtyHours.Remove(d);
-            }
 
-            if (dirty.Count > 0)
+                if (dirty.Count > 0)
+                {
+                    await db.SaveChangesAsync(stoppingToken);
+                    _logger.LogInformation("Recomputed {Count} hours", dirty.Count);
+                }
+
+                // Do not block a thread; stop promptly when the host is shutting down.
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                await _db.SaveChangesAsync();
-                _logger.LogInformation("Recomputed {Count} hours", dirty.Count);
+                break;
             }
-
-            Thread.Sleep(TimeSpan.FromSeconds(5));
         }
     }
 }
