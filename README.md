@@ -65,3 +65,23 @@ kayıt bulduğunda onu "yeniden kirlendi" olarak işaretler (version'ı artırı
 koşullu yapar: `WHERE Id=... AND LeaseId=<worker> AND Version=<claim anındaki version>`. Ingest
 version'ı değiştirdiyse silme 0 satır etkiler → `DirtyHour` kalır → saat yeniden hesaplanır.
 Bu yaklaşım crash-safety'yi (lease/delete-after) bozmadan eksik hesaplamayı kapatır.
+
+## Alınan Kararlar ve Trade-off'lar
+
+Case çözülürken alınan mimari/implementasyon kararları; her biri için **ne kazandık** ve
+**karşılığında hangi maliyeti/limiti kabul ettik**.
+
+| Karar | Kazanç | Kabul edilen maliyet / limit |
+|-------|--------|------------------------------|
+| Senkron aggregation → arka plan worker (`AggregationWorker`) | Düşük ingest latency, saat başı timeout'ların ortadan kalkması | **Eventual consistency**: raporlar birkaç saniye/dakika gecikebilir; worker sağlığı izlenmeli |
+| Idempotency = DB unique index + transaction (in-memory cache **değil**) | 2 VM ve restart'a dayanıklı gerçek garanti; mükerrer kayıt engellenir | Her ingest'te ek DB kontrolü ve `ProcessedBatch` yazımı |
+| Tenant başına rate limiter (API key partition) | Noisy-neighbor koruması; en büyük tenant diğerlerini boğamaz; `429 + Retry-After` | **Process-local** (cross-VM global değil); collector doğru retry yapmazsa gecikme; global limit için Redis ertelendi |
+| DB-backed tenant quota (in-memory sayaç değil) | Çok VM tutarlılığı; restart'ta kaybolmaz; gerçek kullanım verisi | Quota okuması ek DB sorgusu (`SUM`) |
+| Distributed worker lease (`LeaseId`/`LeaseUntil`) | İki VM worker'ı aynı saati işlemez; çift hesaplama önlenir | Lease süresi/atomik update yönetimi; yanlış ayarda gereksiz tekrar iş |
+| Geç gelen okumada saatin **baştan** yeniden hesaplanması (delta değil) | Doğru toplam; geç okuma senaryosu düzelir | Her tetiklemede tam `SUM` maliyeti; eşzamanlılık yarışı (bkz. Bilinen Kısıtlama) |
+| `DirtyHour` dedup (unique index) | Aynı meter/saat için tek aggregation işi; kuyruk şişmez | Ingest sırasında dedup kontrolü; lease'li kayıtla yarış riski |
+| Provider ayrımı: SQLite (test/local) + SQL Server (prod), ayrı context & migration | Prod şeması gerçekçi doğrulanır; test izolasyonu korunur | İki migration setinin birlikte bakımı |
+| İlk transaction'da tüm batch (Reading + ProcessedBatch + DirtyHour atomik) | Kısmi yazım olmaz; retry güvenli | Büyük batch'te uzun transaction / kilit riski; gerekirse chunk'lama |
+| Observability: `GaugeMetrics` (ingest, duplicate, rate-limit, worker, süreler) | Üretimde görünürlük; darboğaz/hata erken tespit | Metrik toplama/altyapı (exporter) gereksinimi |
+| `db.Database.Migrate()` (SQL Server) — otomatik migration | Şema versiyonlu ve tekrarlanabilir | Büyük prod tablolarında migration uzun sürebilir/kilitleyebilir; bakım penceresi önerilir |
+| Collector durable spool / backoff+jitter **uygulanmadı** (kapsam dışı) | Server tarafı hazır tutuldu; gereksiz kapsam genişlemesi yok | Veri kaybı garantisi collector'a bağımlı; contract doğrulanmalı |
