@@ -2,3 +2,4 @@ bin/
 obj/
 *.db
 .vs/
+src/Gauge.Ingest/appsettings.Development.json

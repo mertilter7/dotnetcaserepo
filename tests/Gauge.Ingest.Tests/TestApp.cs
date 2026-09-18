@@ -22,7 +22,9 @@ public sealed class TestApp : WebApplicationFactory<Program>
         builder.ConfigureAppConfiguration((_, cfg) =>
             cfg.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:Default"] = $"Data Source={_dbPath}"
+                ["ConnectionStrings:Default"] = $"Data Source={_dbPath}",
+                // Testler gerçek SQL Server yerine her test için izole SQLite kullanır.
+                ["ConnectionStrings:DefaultConnection"] = string.Empty
             }));
 
         // Focused API tests disable the worker; aggregation tests explicitly opt in.

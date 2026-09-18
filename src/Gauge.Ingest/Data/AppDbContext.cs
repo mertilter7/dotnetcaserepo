@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Gauge.Ingest.Data;
 
-public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public class AppDbContext(DbContextOptions options) : DbContext(options)
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Meter> Meters => Set<Meter>();
@@ -25,6 +25,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.BatchId }).IsUnique();
         // Usage sorgusu tenant ve UTC saat aralığına göre filtrelenir.
         b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.CreatedAt });
+        // SQL Server'da kWh değerlerinin varsayılan precision ile sessizce kesilmesini önler.
+        b.Entity<Reading>().Property(r => r.Kwh).HasPrecision(18, 2);
+        b.Entity<HourlyAggregate>().Property(h => h.TotalKwh).HasPrecision(18, 2);
         // Readings: index yok. Aggregate sorgusu MeterId + Timestamp ile filtreliyor.
     }
 }

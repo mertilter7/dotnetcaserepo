@@ -5,7 +5,6 @@ using Microsoft.EntityFrameworkCore;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
-var sqlServerConnection = builder.Configuration.GetConnectionString("SqlServer");
 var tenantConcurrencyLimit = Math.Max(
     1,
     builder.Configuration.GetValue("Ingest:TenantConcurrencyLimit", 4));
@@ -16,13 +15,25 @@ var retryAfterSeconds = Math.Max(
     1,
     builder.Configuration.GetValue("Ingest:RetryAfterSeconds", 5));
 
-builder.Services.AddDbContext<AppDbContext>(o =>
+builder.Services.AddDbContext<SqliteAppDbContext>((serviceProvider, o) =>
 {
-    // Production can use SQL Server; local tests keep the SQLite fallback.
-    if (!string.IsNullOrWhiteSpace(sqlServerConnection))
-        o.UseSqlServer(sqlServerConnection);
-    else
-        o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=gauge.db");
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    o.UseSqlite(configuration.GetConnectionString("Default") ?? "Data Source=gauge.db");
+});
+builder.Services.AddDbContext<SqlServerAppDbContext>((serviceProvider, o) =>
+{
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    var connection = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("DefaultConnection is required for SQL Server.");
+    o.UseSqlServer(connection);
+});
+builder.Services.AddScoped<AppDbContext>(serviceProvider =>
+{
+    // Testler boş DefaultConnection ile SQLite context'ini, production SQL Server context'ini kullanır.
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    return string.IsNullOrWhiteSpace(configuration.GetConnectionString("DefaultConnection"))
+        ? serviceProvider.GetRequiredService<SqliteAppDbContext>()
+        : serviceProvider.GetRequiredService<SqlServerAppDbContext>();
 });
 builder.Services.AddScoped<ReadingIngestService>();
 // Quota database context kullandığı için request scope ile aynı yaşam döngüsünde olmalı.
@@ -61,8 +72,11 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    // Schema değişiklikleri mevcut database'e migration olarak uygulanır.
-    db.Database.Migrate();
+    // SQLite test/local schema'sı izole oluşturulur; production SQL Server migration kullanır.
+    if (db.Database.IsSqlite())
+        db.Database.EnsureCreated();
+    else
+        db.Database.Migrate();
     Seed.Run(db);
 }
 
