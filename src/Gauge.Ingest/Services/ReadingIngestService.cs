@@ -1,13 +1,15 @@
 using Gauge.Ingest.Data;
 using Gauge.Ingest.Domain;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace Gauge.Ingest.Services;
 
 public sealed class ReadingIngestService(
     AppDbContext db,
-    ILogger<ReadingIngestService> logger)
+    ILogger<ReadingIngestService> logger,
+    GaugeMetrics metrics)
 {
     public async Task<IngestResult> IngestAsync(
         string tenantId,
@@ -33,6 +35,8 @@ public sealed class ReadingIngestService(
         IngestBatchRequest request,
         CancellationToken ct)
     {
+        var stopwatch = Stopwatch.StartNew();
+
         // Existing callers without BatchId remain compatible; new callers get idempotency.
         var batchId = request.BatchId == Guid.Empty ? Guid.NewGuid() : request.BatchId;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -45,7 +49,14 @@ public sealed class ReadingIngestService(
                 .SingleOrDefaultAsync(p => p.TenantId == tenantId && p.BatchId == batchId, ct);
 
             if (processed is not null)
+            {
+                // Duplicate batch yeni veri yazmaz; bu tekrarları ayrıca ölçüyoruz.
+                metrics.DuplicateBatches.Add(1, GaugeMetrics.TenantTag(tenantId));
+                metrics.IngestDurationMs.Record(
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    GaugeMetrics.TenantTag(tenantId));
                 return ToResult(processed);
+            }
 
             var errors = new List<string>();
             var readingsToInsert = new List<Reading>(request.Readings.Count);
@@ -119,6 +130,14 @@ public sealed class ReadingIngestService(
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
 
+            // Metric yalnızca transaction commit edildikten sonra kaydedilir.
+            metrics.IngestBatches.Add(1, GaugeMetrics.TenantTag(tenantId));
+            metrics.AcceptedReadings.Add(accepted, GaugeMetrics.TenantTag(tenantId));
+            metrics.RejectedReadings.Add(errors.Count, GaugeMetrics.TenantTag(tenantId));
+            metrics.IngestDurationMs.Record(
+                stopwatch.Elapsed.TotalMilliseconds,
+                GaugeMetrics.TenantTag(tenantId));
+
             logger.LogInformation(
                 "Ingested batch {BatchId}: {Accepted} readings for {Tenant} from {Collector}",
                 batchId, accepted, tenantId, request.CollectorId);
@@ -134,7 +153,14 @@ public sealed class ReadingIngestService(
                 .SingleOrDefaultAsync(p => p.TenantId == tenantId && p.BatchId == batchId, ct);
 
             if (existing is not null)
+            {
+                // Unique constraint ile yakalanan concurrent retry de duplicate metriğine dahil edilir.
+                metrics.DuplicateBatches.Add(1, GaugeMetrics.TenantTag(tenantId));
+                metrics.IngestDurationMs.Record(
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    GaugeMetrics.TenantTag(tenantId));
                 return ToResult(existing);
+            }
 
             throw;
         }

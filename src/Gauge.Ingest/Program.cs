@@ -27,6 +27,7 @@ builder.Services.AddDbContext<AppDbContext>(o =>
 builder.Services.AddScoped<ReadingIngestService>();
 // Quota database context kullandığı için request scope ile aynı yaşam döngüsünde olmalı.
 builder.Services.AddScoped<TenantQuotaService>();
+builder.Services.AddSingleton<GaugeMetrics>();
 builder.Services.AddHostedService<AggregationWorker>();
 builder.Services.AddRateLimiter(options =>
 {
@@ -35,6 +36,9 @@ builder.Services.AddRateLimiter(options =>
     {
         // Collector, 429 sonrası ne zaman tekrar deneyeceğini bu header'dan öğrenir.
         context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+        context.HttpContext.RequestServices
+            .GetRequiredService<GaugeMetrics>()
+            .RateLimitRejections.Add(1);
         return ValueTask.CompletedTask;
     };
 

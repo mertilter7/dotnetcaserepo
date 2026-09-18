@@ -1,6 +1,7 @@
 using Gauge.Ingest.Data;
 using Gauge.Ingest.Domain;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
 
 namespace Gauge.Ingest.Services;
 
@@ -9,13 +10,18 @@ public sealed class AggregationWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AggregationWorker> _logger;
+    private readonly GaugeMetrics _metrics;
     private readonly string _workerId = Guid.NewGuid().ToString("N");
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
 
-    public AggregationWorker(IServiceScopeFactory scopeFactory, ILogger<AggregationWorker> logger)
+    public AggregationWorker(
+        IServiceScopeFactory scopeFactory,
+        ILogger<AggregationWorker> logger,
+        GaugeMetrics metrics)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _metrics = metrics;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -35,6 +41,7 @@ public sealed class AggregationWorker : BackgroundService
                     if (dirty is null)
                         break;
 
+                    var stopwatch = Stopwatch.StartNew();
                     // Geç gelen reading için saati yeniden topluyoruz; sadece yeni değeri eklemiyoruz.
                     var total = await db.Readings
                         .Where(r => r.MeterId == dirty.MeterId &&
@@ -70,6 +77,8 @@ public sealed class AggregationWorker : BackgroundService
                         .Where(d => d.Id == dirty.Id && d.LeaseId == _workerId)
                         .ExecuteDeleteAsync(stoppingToken);
                     await transaction.CommitAsync(stoppingToken);
+                    _metrics.AggregatedHours.Add(1);
+                    _metrics.AggregationDurationMs.Record(stopwatch.Elapsed.TotalMilliseconds);
                     processed++;
                 }
 
@@ -111,6 +120,7 @@ public sealed class AggregationWorker : BackgroundService
         if (claimed == 0)
             return null;
 
+        _metrics.WorkerClaims.Add(1);
         // Atomik update başarılıysa bu worker artık kaydın sahibidir.
         return await db.DirtyHours
             .AsNoTracking()
