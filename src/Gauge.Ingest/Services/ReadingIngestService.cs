@@ -15,6 +15,25 @@ public sealed class ReadingIngestService(
         IngestBatchRequest request,
         CancellationToken ct = default)
     {
+        // A different batch may race on the same unique DirtyHour key; retry the whole transaction.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await IngestCoreAsync(tenantId, request, ct);
+            }
+            catch (DbUpdateException) when (attempt < 2)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), ct);
+            }
+        }
+    }
+
+    private async Task<IngestResult> IngestCoreAsync(
+        string tenantId,
+        IngestBatchRequest request,
+        CancellationToken ct)
+    {
         // Existing callers without BatchId remain compatible; new callers get idempotency.
         var batchId = request.BatchId == Guid.Empty ? Guid.NewGuid() : request.BatchId;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -30,7 +49,7 @@ public sealed class ReadingIngestService(
                 return ToResult(processed);
 
             var errors = new List<string>();
-            var accepted = 0;
+            var readingsToInsert = new List<Reading>(request.Readings.Count);
             var now = DateTime.UtcNow;
             var meterIds = request.Readings.Select(r => r.MeterId).Distinct().ToList();
             var meters = await db.Meters
@@ -51,16 +70,18 @@ public sealed class ReadingIngestService(
                     continue;
                 }
 
-                db.Readings.Add(new Reading
+                readingsToInsert.Add(new Reading
                 {
                     MeterId = dto.MeterId,
                     Timestamp = dto.Timestamp,
                     Kwh = dto.Kwh,
                     ReceivedAt = now
                 });
-                accepted++;
             }
 
+            // Batch insert: keep one transaction while avoiding one Add call per entity.
+            db.Readings.AddRange(readingsToInsert);
+            var accepted = readingsToInsert.Count;
             var result = new IngestResult(accepted, errors.Count, errors);
             db.ProcessedBatches.Add(new ProcessedBatch
             {
@@ -81,8 +102,20 @@ public sealed class ReadingIngestService(
                 .Distinct()
                 .ToList();
 
+            // Avoid adding the same pending aggregation key more than once.
+            var dirtyMeterIds = hours.Select(h => h.MeterId).Distinct().ToList();
+            var existingDirty = await db.DirtyHours
+                .Where(d => dirtyMeterIds.Contains(d.MeterId))
+                .ToListAsync(ct);
+            var existingDirtyKeys = existingDirty
+                .Select(d => (d.MeterId, d.HourStart))
+                .ToHashSet();
+
             foreach (var (meterId, hour) in hours)
-                db.DirtyHours.Add(new DirtyHour { MeterId = meterId, HourStart = hour });
+            {
+                if (existingDirtyKeys.Add((meterId, hour)))
+                    db.DirtyHours.Add(new DirtyHour { MeterId = meterId, HourStart = hour });
+            }
 
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);

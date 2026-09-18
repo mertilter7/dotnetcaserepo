@@ -16,7 +16,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     {
         b.Entity<Tenant>().HasIndex(t => t.ApiKey).IsUnique();
         b.Entity<Meter>().HasIndex(m => m.TenantId);
+        // Aggregation filters readings by meter and time range.
+        b.Entity<Reading>().HasIndex(r => new { r.MeterId, r.Timestamp });
         b.Entity<HourlyAggregate>().HasIndex(h => new { h.MeterId, h.HourStart }).IsUnique();
+        // One pending aggregation job is enough for a meter and hour.
+        b.Entity<DirtyHour>().HasIndex(d => new { d.MeterId, d.HourStart }).IsUnique();
         // Idempotency guarantee: a batch can be processed once per tenant.
         b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.BatchId }).IsUnique();
         // Readings: index yok. Aggregate sorgusu MeterId + Timestamp ile filtreliyor.
