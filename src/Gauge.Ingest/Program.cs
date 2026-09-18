@@ -4,9 +4,16 @@ using Gauge.Ingest.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+var sqlServerConnection = builder.Configuration.GetConnectionString("SqlServer");
 
 builder.Services.AddDbContext<AppDbContext>(o =>
-    o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=gauge.db"));
+{
+    // Production can use SQL Server; local tests keep the SQLite fallback.
+    if (!string.IsNullOrWhiteSpace(sqlServerConnection))
+        o.UseSqlServer(sqlServerConnection);
+    else
+        o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=gauge.db");
+});
 builder.Services.AddScoped<ReadingIngestService>();
 builder.Services.AddSingleton<TenantQuotaService>();
 builder.Services.AddHostedService<AggregationWorker>();
