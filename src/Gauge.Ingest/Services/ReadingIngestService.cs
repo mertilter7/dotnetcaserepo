@@ -15,8 +15,27 @@ public sealed class ReadingIngestService(
         IngestBatchRequest request,
         CancellationToken ct = default)
     {
-        // Existing callers without BatchId remain compatible; new callers get idempotency.
-        var batchId = request.BatchId == Guid.Empty ? Guid.NewGuid() : request.BatchId;
+        // A different batch may race on the same unique DirtyHour key; retry the whole transaction.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await IngestCoreAsync(tenantId, request, ct);
+            }
+            catch (DbUpdateException) when (attempt < 2)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), ct);
+            }
+        }
+    }
+
+    private async Task<IngestResult> IngestCoreAsync(
+        string tenantId,
+        IngestBatchRequest request,
+        CancellationToken ct)
+    {
+        // Endpoint batchId zorunlu tuttuğu için burada fallback GUID üretmiyoruz.
+        var batchId = request.BatchId;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         try
