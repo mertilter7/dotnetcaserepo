@@ -20,6 +20,10 @@ public static class ReadingsEndpoint
             var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.ApiKey == apiKey, ct);
             if (tenant is null) return Results.Unauthorized();
 
+            // Idempotency için batch kimliği zorunlu; boş kimlikle ingest başlatmıyoruz.
+            if (request.BatchId == Guid.Empty)
+                return Results.BadRequest("batchId is required");
+
             if (request.Readings.Count == 0) return Results.BadRequest("empty batch");
 
             var result = await ingest.IngestAsync(tenant.Id, request, ct);

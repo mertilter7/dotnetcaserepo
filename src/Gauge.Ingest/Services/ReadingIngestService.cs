@@ -37,8 +37,8 @@ public sealed class ReadingIngestService(
     {
         var stopwatch = Stopwatch.StartNew();
 
-        // Existing callers without BatchId remain compatible; new callers get idempotency.
-        var batchId = request.BatchId == Guid.Empty ? Guid.NewGuid() : request.BatchId;
+        // Endpoint batchId'yi zorunlu tuttuğu için burada fallback GUID üretmiyoruz.
+        var batchId = request.BatchId;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         try

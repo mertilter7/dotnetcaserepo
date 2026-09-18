@@ -39,6 +39,12 @@ public sealed class IdempotencyTests : IDisposable
         return await scope.ServiceProvider.GetRequiredService<AppDbContext>().Readings.CountAsync();
     }
 
+    private async Task<int> DirtyHourCountAsync()
+    {
+        using var scope = _app.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().DirtyHours.CountAsync();
+    }
+
     [Fact]
     public async Task SameBatchTwice_WritesOnce()
     {
@@ -73,6 +79,19 @@ public sealed class IdempotencyTests : IDisposable
         await _client.PostAsJsonAsync("/api/readings", Batch(Guid.NewGuid()));
 
         Assert.Equal(40, await ReadingCountAsync());
+    }
+
+    [Fact]
+    public async Task DifferentBatchesForSameHour_CreateOneDirtyHour()
+    {
+        // Aynı meter/saate düşen iki farklı batch tek bir aggregation işi üretmeli.
+        var first = await _client.PostAsJsonAsync("/api/readings", Batch(Guid.NewGuid(), count: 1));
+        var second = await _client.PostAsJsonAsync("/api/readings", Batch(Guid.NewGuid(), count: 1));
+
+        first.EnsureSuccessStatusCode();
+        second.EnsureSuccessStatusCode();
+
+        Assert.Equal(1, await DirtyHourCountAsync());
     }
 
     public void Dispose() => _app.Dispose();
