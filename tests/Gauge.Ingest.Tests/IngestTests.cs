@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Gauge.Ingest.Data;
 using Gauge.Ingest.Domain;
 using Gauge.Ingest.Services;
@@ -21,7 +22,10 @@ public sealed class IngestTests : IDisposable
     [Fact]
     public async Task ValidBatch_IsAccepted()
     {
-        var req = new IngestBatchRequest("col-1", [new("MTR-A-001", new DateTime(2026, 9, 18, 10, 15, 0, DateTimeKind.Utc), 1.5m)]);
+        var req = new IngestBatchRequest(
+            "col-1",
+            [new("MTR-A-001", new DateTime(2026, 9, 18, 10, 15, 0, DateTimeKind.Utc), 1.5m)],
+            Guid.NewGuid());
         var res = await _client.PostAsJsonAsync("/api/readings", req);
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
@@ -33,7 +37,10 @@ public sealed class IngestTests : IDisposable
     [Fact]
     public async Task MeterOfOtherTenant_IsRejected()
     {
-        var req = new IngestBatchRequest("col-1", [new("MTR-B-001", DateTime.UtcNow, 1m)]);
+        var req = new IngestBatchRequest(
+            "col-1",
+            [new("MTR-B-001", DateTime.UtcNow, 1m)],
+            Guid.NewGuid());
         var body = await (await _client.PostAsJsonAsync("/api/readings", req)).Content.ReadFromJsonAsync<IngestResult>();
 
         Assert.Equal(0, body!.Accepted);
@@ -44,8 +51,22 @@ public sealed class IngestTests : IDisposable
     public async Task MissingApiKey_IsUnauthorized()
     {
         using var anon = _app.CreateClient();
-        var res = await anon.PostAsJsonAsync("/api/readings", new IngestBatchRequest("c", [new("MTR-A-001", DateTime.UtcNow, 1m)]));
+        var res = await anon.PostAsJsonAsync(
+            "/api/readings",
+            new IngestBatchRequest("c", [new("MTR-A-001", DateTime.UtcNow, 1m)], Guid.NewGuid()));
         Assert.Equal(HttpStatusCode.Unauthorized, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task MissingBatchId_IsBadRequest()
+    {
+        var res = await _client.PostAsJsonAsync("/api/readings", new
+        {
+            collectorId = "col-1",
+            readings = new[] { new { meterId = "MTR-A-001", timestamp = DateTime.UtcNow, kwh = 1m } }
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
 
     [Fact]
@@ -77,6 +98,25 @@ public sealed class IngestTests : IDisposable
         var res = await _client.GetAsync("/api/tenants/tenant-b/usage");
 
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task UsageReport_ReadsCommittedBatchesForCurrentHour()
+    {
+        var request = new IngestBatchRequest(
+            "col-1",
+            [
+                new("MTR-A-001", DateTime.UtcNow, 1m),
+                new("MTR-A-002", DateTime.UtcNow, 1m)
+            ],
+            Guid.NewGuid());
+
+        var ingest = await _client.PostAsJsonAsync("/api/readings", request);
+        ingest.EnsureSuccessStatusCode();
+
+        var usage = await _client.GetFromJsonAsync<JsonElement>("/api/tenants/tenant-a/usage");
+
+        Assert.Equal(2, usage.GetProperty("readingsThisHour").GetInt64());
     }
 
     public void Dispose() => _app.Dispose();

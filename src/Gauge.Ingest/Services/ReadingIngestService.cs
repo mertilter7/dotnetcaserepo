@@ -7,7 +7,6 @@ namespace Gauge.Ingest.Services;
 
 public sealed class ReadingIngestService(
     AppDbContext db,
-    TenantQuotaService quota,
     ILogger<ReadingIngestService> logger)
 {
     public async Task<IngestResult> IngestAsync(
@@ -86,7 +85,6 @@ public sealed class ReadingIngestService(
 
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-            quota.Record(tenantId, accepted);
 
             logger.LogInformation(
                 "Ingested batch {BatchId}: {Accepted} readings for {Tenant} from {Collector}",

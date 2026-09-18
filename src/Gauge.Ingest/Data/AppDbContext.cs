@@ -19,6 +19,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         b.Entity<HourlyAggregate>().HasIndex(h => new { h.MeterId, h.HourStart }).IsUnique();
         // Idempotency guarantee: a batch can be processed once per tenant.
         b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.BatchId }).IsUnique();
+        // Usage reports filter processed batches by tenant and UTC creation hour.
+        b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.CreatedAt });
         // Readings: index yok. Aggregate sorgusu MeterId + Timestamp ile filtreliyor.
     }
 }

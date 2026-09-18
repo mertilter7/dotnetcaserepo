@@ -20,6 +20,10 @@ public static class ReadingsEndpoint
             var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.ApiKey == apiKey, ct);
             if (tenant is null) return Results.Unauthorized();
 
+            // Idempotency için batch kimliği zorunlu; boş kimlikle ingest başlatmıyoruz.
+            if (request.BatchId == Guid.Empty)
+                return Results.BadRequest("batchId is required");
+
             if (request.Readings.Count == 0) return Results.BadRequest("empty batch");
 
             var result = await ingest.IngestAsync(tenant.Id, request, ct);
@@ -62,7 +66,9 @@ public static class ReadingsEndpoint
             if (tenant.Id != tenantId)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
 
-            return Results.Ok(new { tenantId = tenant.Id, readingsThisHour = quota.Get(tenant.Id) });
+            // Usage aynı SQL database'deki commit edilmiş batch kayıtlarından hesaplanır.
+            var readingsThisHour = await quota.GetAsync(tenant.Id, ct);
+            return Results.Ok(new { tenantId = tenant.Id, readingsThisHour });
         });
     }
 
