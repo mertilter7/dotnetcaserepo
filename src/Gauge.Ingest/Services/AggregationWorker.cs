@@ -32,6 +32,7 @@ public sealed class AggregationWorker : BackgroundService
 
                 foreach (var d in dirty)
                 {
+                    // Geç gelen reading için saati yeniden topluyoruz; sadece yeni değeri eklemiyoruz.
                     var total = await db.Readings
                         .Where(r => r.MeterId == d.MeterId &&
                                     r.Timestamp >= d.HourStart &&
