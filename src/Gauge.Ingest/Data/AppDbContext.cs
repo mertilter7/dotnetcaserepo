@@ -23,6 +23,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         b.Entity<DirtyHour>().HasIndex(d => new { d.MeterId, d.HourStart }).IsUnique();
         // Idempotency guarantee: a batch can be processed once per tenant.
         b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.BatchId }).IsUnique();
+        // Usage sorgusu tenant ve UTC saat aralığına göre filtrelenir.
+        b.Entity<ProcessedBatch>().HasIndex(p => new { p.TenantId, p.CreatedAt });
         // Readings: index yok. Aggregate sorgusu MeterId + Timestamp ile filtreliyor.
     }
 }

@@ -25,7 +25,8 @@ builder.Services.AddDbContext<AppDbContext>(o =>
         o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=gauge.db");
 });
 builder.Services.AddScoped<ReadingIngestService>();
-builder.Services.AddSingleton<TenantQuotaService>();
+// Quota database context kullandığı için request scope ile aynı yaşam döngüsünde olmalı.
+builder.Services.AddScoped<TenantQuotaService>();
 builder.Services.AddHostedService<AggregationWorker>();
 builder.Services.AddRateLimiter(options =>
 {

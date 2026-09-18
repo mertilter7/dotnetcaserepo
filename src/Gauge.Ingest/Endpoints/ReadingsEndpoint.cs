@@ -64,7 +64,9 @@ public static class ReadingsEndpoint
             if (tenant.Id != tenantId)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
 
-            return Results.Ok(new { tenantId = tenant.Id, readingsThisHour = quota.Get(tenant.Id) });
+            // Usage commit edilmiş batch kayıtlarından okunduğu için iki VM'de tutarlıdır.
+            var readingsThisHour = await quota.GetAsync(tenant.Id, ct);
+            return Results.Ok(new { tenantId = tenant.Id, readingsThisHour });
         });
     }
 

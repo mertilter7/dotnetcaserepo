@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Gauge.Ingest.Data;
 using Gauge.Ingest.Domain;
 using Gauge.Ingest.Services;
@@ -77,6 +78,25 @@ public sealed class IngestTests : IDisposable
         var res = await _client.GetAsync("/api/tenants/tenant-b/usage");
 
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task UsageReport_ReadsCommittedBatchesForCurrentHour()
+    {
+        var request = new IngestBatchRequest(
+            "col-1",
+            [
+                new("MTR-A-001", DateTime.UtcNow, 1m),
+                new("MTR-A-002", DateTime.UtcNow, 1m)
+            ],
+            Guid.NewGuid());
+
+        var ingest = await _client.PostAsJsonAsync("/api/readings", request);
+        ingest.EnsureSuccessStatusCode();
+
+        var usage = await _client.GetFromJsonAsync<JsonElement>("/api/tenants/tenant-a/usage");
+
+        Assert.Equal(2, usage.GetProperty("readingsThisHour").GetInt64());
     }
 
     public void Dispose() => _app.Dispose();

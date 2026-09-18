@@ -1,18 +1,28 @@
-using System.Collections.Concurrent;
+using Gauge.Ingest.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Gauge.Ingest.Services;
 
 /// <summary>Tenant başına bu saat içinde kabul edilen okuma sayısını tutar (raporlama/faturalama için).</summary>
-public sealed class TenantQuotaService
+public sealed class TenantQuotaService(AppDbContext db)
 {
-    // Ingest requests run concurrently across threads and API instances.
-    private static readonly ConcurrentDictionary<string, long> Counters = new();
-
-    public void Record(string tenantId, int count)
+    public Task<long> GetAsync(string tenantId, CancellationToken ct = default)
     {
-        // Atomic update prevents concurrent requests from corrupting the counter.
-        Counters.AddOrUpdate(tenantId, count, (_, current) => current + count);
-    }
+        var hourStart = new DateTime(
+            DateTime.UtcNow.Year,
+            DateTime.UtcNow.Month,
+            DateTime.UtcNow.Day,
+            DateTime.UtcNow.Hour,
+            0,
+            0,
+            DateTimeKind.Utc);
+        var nextHour = hourStart.AddHours(1);
 
-    public long Get(string tenantId) => Counters.TryGetValue(tenantId, out var v) ? v : 0;
+        // ProcessedBatch aynı transaction'da yazıldığı için kabul edilen veri kalıcıdır.
+        return db.ProcessedBatches
+            .Where(p => p.TenantId == tenantId &&
+                        p.CreatedAt >= hourStart &&
+                        p.CreatedAt < nextHour)
+            .SumAsync(p => (long)p.Accepted, ct);
+    }
 }
