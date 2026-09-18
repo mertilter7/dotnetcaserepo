@@ -37,6 +37,8 @@ public sealed class DirtyHour
     public long Id { get; set; }
     public string MeterId { get; set; } = default!;
     public DateTime HourStart { get; set; }
+    public string? LeaseId { get; set; }
+    public DateTime? LeaseUntil { get; set; }
 }
 
 public sealed class ProcessedBatch
