@@ -39,8 +39,10 @@ public static class ReadingsEndpoint
 
             // Tenant isolation: only aggregates belonging to the API key's tenant are visible.
             var aggregates = await db.Meters
+                .AsNoTracking()
                 .Where(m => m.Id == meterId && m.TenantId == tenant.Id)
                 .SelectMany(m => db.HourlyAggregates
+                    .AsNoTracking()
                     .Where(h => h.MeterId == m.Id)
                     .OrderBy(h => h.HourStart))
                 .ToListAsync(ct);
@@ -73,6 +75,9 @@ public static class ReadingsEndpoint
     {
         // Tenant scope is derived from the API key, never from a user-controlled route value.
         var apiKey = http.Request.Headers["X-Api-Key"].ToString();
-        return db.Tenants.FirstOrDefaultAsync(t => t.ApiKey == apiKey, ct);
+        // Reporting tenant lookup sadece okuma yapar; change tracking gereksiz maliyettir.
+        return db.Tenants
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.ApiKey == apiKey, ct);
     }
 }
