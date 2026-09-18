@@ -12,6 +12,9 @@ var tenantConcurrencyLimit = Math.Max(
 var tenantQueueLimit = Math.Max(
     0,
     builder.Configuration.GetValue("Ingest:TenantQueueLimit", 8));
+var retryAfterSeconds = Math.Max(
+    1,
+    builder.Configuration.GetValue("Ingest:RetryAfterSeconds", 5));
 
 builder.Services.AddDbContext<AppDbContext>(o =>
 {
@@ -27,8 +30,14 @@ builder.Services.AddHostedService<AggregationWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, _) =>
+    {
+        // Collector, 429 sonrası ne zaman tekrar deneyeceğini bu header'dan öğrenir.
+        context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+        return ValueTask.CompletedTask;
+    };
 
-    // Partitioning by API key prevents one tenant from consuming all ingest slots.
+    // API key partition'ı, tek tenant'ın tüm ingest kaynaklarını tüketmesini sınırlar.
     options.AddPolicy("tenant-ingest", httpContext =>
         RateLimitPartition.GetConcurrencyLimiter(
             httpContext.Request.Headers["X-Api-Key"].ToString(),

@@ -26,7 +26,7 @@ public static class ReadingsEndpoint
             return Results.Ok(result);
         })
         .WithName("IngestReadings")
-        // Backpressure is scoped per tenant; reporting endpoints are unaffected.
+        // Backpressure tenant bazlıdır; reporting endpoint'leri bu limitle etkilenmez.
         .RequireRateLimiting("tenant-ingest")
         .WithOpenApi();
 
