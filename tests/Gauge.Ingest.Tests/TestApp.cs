@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Gauge.Ingest.Services;
 
 namespace Gauge.Ingest.Tests;
 
-/// <summary>Her test sınıfı için ayrı SQLite dosyası kullanır.</summary>
+/// <summary>Her test instance'ı için ayrı SQLite dosyası kullanır.</summary>
 public sealed class TestApp : WebApplicationFactory<Program>
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"gauge-test-{Guid.NewGuid():N}.db");
@@ -16,6 +18,15 @@ public sealed class TestApp : WebApplicationFactory<Program>
             {
                 ["ConnectionStrings:Default"] = $"Data Source={_dbPath}"
             }));
+
+        // Idempotency tests do not need aggregation; disabling it keeps each testhost isolated.
+        builder.ConfigureServices(services =>
+        {
+            var worker = services.SingleOrDefault(
+                d => d.ImplementationType == typeof(AggregationWorker));
+            if (worker is not null)
+                services.Remove(worker);
+        });
     }
 
     protected override void Dispose(bool disposing)

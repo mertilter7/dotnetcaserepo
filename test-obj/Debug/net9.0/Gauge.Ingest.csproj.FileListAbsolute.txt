@@ -1,0 +1,9 @@
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.csproj.AssemblyReference.cache
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\rpswa.dswa.cache.json
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.AssemblyInfoInputs.cache
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.AssemblyInfo.cs
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.csproj.CoreCompileInputs.cache
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.MvcApplicationPartsAssemblyInfo.cs
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.MvcApplicationPartsAssemblyInfo.cache
+C:\Users\merti\Desktop\starter-repo\test-obj\Debug\net9.0\Gauge.Ingest.sourcelink.json
